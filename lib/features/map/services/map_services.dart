@@ -2,22 +2,47 @@ import 'dart:convert';
 
 import 'package:geocoding/geocoding.dart';
 import 'package:geolocator/geolocator.dart';
-import 'package:http/http.dart' as http;
 import 'package:latlong2/latlong.dart';
-import 'package:map_app/features/map/model/search_result.dart';
+import 'package:http/http.dart' as http;
 import 'package:map_app/features/map/model/transport_mode.dart';
+import 'package:map_app/features/map/model/search_result.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 class MapServices {
-  Future<bool> checkAndRequestLocationPermission() async {
+  static const LatLng cairoLocation = LatLng(
+    30.0444,
+    31.2357,
+  );
+
+  Future<void> checkAndRequestLocationPermission() async {
     try {
-      final serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      final serviceEnabled =
+      await Geolocator.isLocationServiceEnabled();
 
       if (!serviceEnabled) {
-        return false;
+        return;
       }
 
-      var permission = await Geolocator.checkPermission();
+      LocationPermission permission =
+      await Geolocator.checkPermission();
+
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+      }
+    } catch (_) {}
+  }
+
+  Future<LatLng> getCurrentLocation() async {
+    try {
+      final serviceEnabled =
+      await Geolocator.isLocationServiceEnabled();
+
+      if (!serviceEnabled) {
+        return cairoLocation;
+      }
+
+      LocationPermission permission =
+      await Geolocator.checkPermission();
 
       if (permission == LocationPermission.denied) {
         permission = await Geolocator.requestPermission();
@@ -25,21 +50,7 @@ class MapServices {
 
       if (permission == LocationPermission.denied ||
           permission == LocationPermission.deniedForever) {
-        return false;
-      }
-
-      return true;
-    } catch (e) {
-      return false;
-    }
-  }
-
-  Future<LatLng?> getCurrentLocation() async {
-    try {
-      final hasPermission = await checkAndRequestLocationPermission();
-
-      if (!hasPermission) {
-        return null;
+        return cairoLocation;
       }
 
       final position = await Geolocator.getCurrentPosition(
@@ -52,8 +63,8 @@ class MapServices {
         position.latitude,
         position.longitude,
       );
-    } catch (e) {
-      return null;
+    } catch (_) {
+      return cairoLocation;
     }
   }
 
@@ -65,29 +76,17 @@ class MapServices {
       );
 
       if (placemarks.isEmpty) {
-        return 'Address not available';
+        return "Address not available";
       }
 
       final place = placemarks.first;
 
-      final parts = <String>[
-        if (place.street?.trim().isNotEmpty == true) place.street!.trim(),
-        if (place.subThoroughfare?.trim().isNotEmpty == true)
-          place.subThoroughfare!.trim(),
-        if (place.locality?.trim().isNotEmpty == true) place.locality!.trim(),
-        if (place.administrativeArea?.trim().isNotEmpty == true)
-          place.administrativeArea!.trim(),
-        if (place.country?.trim().isNotEmpty == true)
-          place.country!.trim(),
-      ];
-
-      if (parts.isEmpty) {
-        return 'Address not available';
-      }
-
-      return parts.join(', ');
-    } catch (e) {
-      return 'Address not available';
+      return "${place.street ?? ''} ${place.subThoroughfare ?? ''}, "
+          "${place.locality ?? ''}, "
+          "${place.administrativeArea ?? ''}, "
+          "${place.country ?? ''}";
+    } catch (_) {
+      return "Address not available";
     }
   }
 
@@ -104,49 +103,25 @@ class MapServices {
           '${end.longitude},${end.latitude}'
           '?overview=full&geometries=geojson';
 
-      final response = await http.get(
-        Uri.parse(url),
-      );
+      final response = await http.get(Uri.parse(url));
 
       if (response.statusCode != 200) {
         return [];
       }
 
       final data = jsonDecode(response.body);
+      final coords =
+      data['routes'][0]['geometry']['coordinates'] as List;
 
-      if (data is! Map<String, dynamic>) {
-        return [];
-      }
-
-      final routes = data['routes'];
-
-      if (routes is! List || routes.isEmpty) {
-        return [];
-      }
-
-      final geometry = routes[0]['geometry'];
-
-      if (geometry is! Map<String, dynamic>) {
-        return [];
-      }
-
-      final coordinates = geometry['coordinates'];
-
-      if (coordinates is! List) {
-        return [];
-      }
-
-      return coordinates
-          .whereType<List>()
-          .where((coordinate) => coordinate.length >= 2)
+      return coords
           .map(
-            (coordinate) => LatLng(
-          (coordinate[1] as num).toDouble(),
-          (coordinate[0] as num).toDouble(),
+            (c) => LatLng(
+          c[1].toDouble(),
+          c[0].toDouble(),
         ),
       )
           .toList();
-    } catch (e) {
+    } catch (_) {
       return [];
     }
   }
@@ -156,42 +131,16 @@ class MapServices {
       double lng,
       TransportMode transportMode,
       ) async {
-    final mode = transportMode == TransportMode.driving ? 'd' : 'w';
+    final mode =
+    transportMode == TransportMode.driving ? 'd' : 'w';
 
-    final googleMapsUri = Uri.parse(
-      'google.navigation:q=$lat,$lng&mode=$mode',
+    final uri = Uri.parse(
+      "google.navigation:q=$lat,$lng&mode=$mode",
     );
 
     try {
-      final launched = await launchUrl(
-        googleMapsUri,
-        mode: LaunchMode.externalApplication,
-      );
-
-      if (launched) {
-        return;
-      }
-
-      final webUri = Uri.parse(
-        'https://www.google.com/maps/dir/?api=1&destination=$lat,$lng',
-      );
-
-      await launchUrl(
-        webUri,
-        mode: LaunchMode.externalApplication,
-      );
-    } catch (e) {
-      try {
-        final webUri = Uri.parse(
-          'https://www.google.com/maps/dir/?api=1&destination=$lat,$lng',
-        );
-
-        await launchUrl(
-          webUri,
-          mode: LaunchMode.externalApplication,
-        );
-      } catch (_) {}
-    }
+      await launchUrl(uri);
+    } catch (_) {}
   }
 
   Future<List<SearchResult>> searchLocation(String query) async {
@@ -200,9 +149,7 @@ class MapServices {
     }
 
     try {
-      final encodedQuery = Uri.encodeQueryComponent(
-        query.trim(),
-      );
+      final encodedQuery = Uri.encodeComponent(query.trim());
 
       final url =
           'https://nominatim.openstreetmap.org/search'
@@ -213,8 +160,7 @@ class MapServices {
       final response = await http.get(
         Uri.parse(url),
         headers: {
-          'User-Agent': 'MapApp/1.0',
-          'Accept': 'application/json',
+          'User-Agent': 'MapApp',
         },
       );
 
@@ -222,17 +168,14 @@ class MapServices {
         return [];
       }
 
-      final data = jsonDecode(response.body);
-
-      if (data is! List) {
-        return [];
-      }
+      final List<dynamic> data = jsonDecode(response.body);
 
       return data
-          .whereType<Map<String, dynamic>>()
-          .map(SearchResult.fromJson)
+          .map(
+            (json) => SearchResult.fromJson(json),
+      )
           .toList();
-    } catch (e) {
+    } catch (_) {
       return [];
     }
   }
